@@ -17,6 +17,9 @@
 (define-constant ERR_GAME_NOT_FOUND u102) ;; Error thrown when a game cannot be found given a Game ID, i.e. invalid Game ID
 (define-constant ERR_GAME_CANNOT_BE_JOINED u103) ;; Error thrown when a game cannot be joined, usually because it already has two players
 (define-constant ERR_NOT_YOUR_TURN u104) ;; Error thrown when a player tries to make a move when it is not their turn
+(define-constant ERR_GAME_NOT_TIMED_OUT u105) ;; Error thrown when a player tries to cancel a game that has not timed out
+(define-constant ERR_CANT_CANCEL_OWN_TURN u106) ;; Error thrown when a player tries to cancel a game when it is their turn to play
+(define-constant MOVE_TIMEOUT_BLOCKS u144) ;; The number of blocks after which a game can be cancelled due to inactivity (~24 hours)
 ;; data vars
 ;;
 
@@ -33,7 +36,8 @@
 	bet-amount: uint,
 	board: (list 9 uint),
 
-	winner: (optional principal)
+	winner: (optional principal),
+	last-move-at: uint
 })
 
 ;; public functions
@@ -61,7 +65,8 @@
         (game-data (merge original-game-data {
             board: game-board,
             is-player-one-turn: (not is-player-one-turn),
-            winner: (if is-now-winner (some player-turn) none)
+            winner: (if is-now-winner (some player-turn) none),
+            last-move-at: block-height
         }))
     )
 
@@ -99,7 +104,8 @@
             is-player-one-turn: false,
             bet-amount: bet-amount,
             board: game-board,
-            winner: none
+            winner: none,
+            last-move-at: block-height
         })
     )
 
@@ -138,7 +144,8 @@
         (game-data (merge original-game-data {
             board: game-board,
             player-two: (some contract-caller),
-            is-player-one-turn: true
+            is-player-one-turn: true,
+            last-move-at: block-height
         }))
     )
 
@@ -160,6 +167,57 @@
     ;; Return the Game ID of the game
     (ok game-id)
 ))
+
+(define-public (cancel-game (game-id uint))
+    (let (
+            ;; Load the game data, throw an error if Game ID is invalid
+            (game-data (unwrap! (map-get? games game-id) (err ERR_GAME_NOT_FOUND)))
+            (last-move-block (get last-move-at game-data))
+            (is-p1-turn (get is-player-one-turn game-data))
+            (player-one (get player-one game-data))
+            (player-two (unwrap! (get player-two game-data) (err ERR_GAME_CANNOT_BE_JOINED))) ;; Game must have two players to be cancelled
+            (current-player (if is-p1-turn
+                player-one
+                player-two
+            ))
+            (waiting-player (if is-p1-turn
+                player-two
+                player-one
+            ))
+        )
+        ;; Ensure the game doesn't already have a winner
+        (asserts! (is-none (get winner game-data))
+            (err ERR_GAME_CANNOT_BE_JOINED)
+        )
+
+        ;; Ensure the caller is the player who is waiting for a move
+        (asserts! (is-eq contract-caller waiting-player)
+            (err ERR_CANT_CANCEL_OWN_TURN)
+        )
+
+        ;; Ensure the timeout period has passed
+        (asserts! (>= (- block-height last-move-block) MOVE_TIMEOUT_BLOCKS)
+            (err ERR_GAME_NOT_TIMED_OUT)
+        )
+
+        ;; Transfer the prize pool to the waiting player
+        (try! (as-contract (stx-transfer? (* u2 (get bet-amount game-data)) tx-sender waiting-player)))
+
+        ;; Update the game state to set the winner
+        (map-set games game-id
+            (merge game-data { winner: (some waiting-player) })
+        )
+
+        (print {
+            action: "cancel-game",
+            data: {
+                game-id: game-id,
+                winner: waiting-player,
+            },
+        })
+        (ok true)
+    )
+)
 
 
 ;; read only functions
