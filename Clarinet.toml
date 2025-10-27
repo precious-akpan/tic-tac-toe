@@ -2,13 +2,13 @@
 name = 'tic-tac-toe'
 description = ''
 authors = []
-telemetry = true
+telemetry = false
 cache_dir = './.cache'
 requirements = []
 [contracts.tic-tac-toe]
 path = 'contracts/tic-tac-toe.clar'
-clarity_version = 3
-epoch = 'latest'
+clarity_version = 2
+epoch = 3.0
 [repl.analysis]
 passes = ['check_checker']
 
@@ -17,7 +17,3 @@ strict = false
 trusted_sender = false
 trusted_caller = false
 callee_filter = false
-
-[repl.remote_data]
-enabled = false
-api_url = 'https://api.hiro.so'
